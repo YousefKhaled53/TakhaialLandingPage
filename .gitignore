@@ -29,3 +29,8 @@ Thumbs.db
 
 # ── Large raw assets (keep processed ones in public/) ─────────
 Digital_Eye_Animation_Generated.mp4
+
+# ── Deploy secrets ────────────────────────────────────────────
+*.pem
+deploy/block-devices.json
+deploy/tags.json

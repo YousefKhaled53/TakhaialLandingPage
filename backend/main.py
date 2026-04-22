@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from datetime import datetime, timezone
 from typing import Optional
@@ -29,13 +30,21 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS: permit the Next.js dev server on :3000. Extend origins for staging/prod as needed.
+# CORS: permit the Next.js dev server and production domains.
+_default_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "https://takhaial.com",
+    "https://www.takhaial.com",
+    "http://takhaial.com",
+    "http://www.takhaial.com",
+]
+_env_origins = os.getenv("CORS_ORIGINS", "").split(",")
+_origins = _default_origins + [o.strip() for o in _env_origins if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

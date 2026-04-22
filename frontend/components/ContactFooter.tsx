@@ -84,7 +84,7 @@ export default function ContactFooter() {
               </p>
 
               <div className="mt-6 flex flex-col gap-2 text-xs tracking-wide text-white/45">
-                <div>hello@takhaial.ai</div>
+                <div>hello@takhaial.com</div>
                 <div>+971 · KSA · Visionary Intelligence HQ</div>
               </div>
             </div>
@@ -217,14 +217,14 @@ function Footer() {
         <FooterColumn
           title="Products"
           items={[
+            "Closr",
+            "Eikon",
+            "Metis",
+            "Atlas",
             "Lucid",
             "Vivid",
-            "Bayan",
-            "Closr",
-            "Aicon",
-            "Aegis",
-            "360-VR",
-            "Combining Realities",
+            "Nexus",
+            "Vizor",
           ]}
         />
         <FooterColumn
