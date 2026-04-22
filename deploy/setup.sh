@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════════
-# Takhaial Landing Page — Server Setup Script
+# Takhaial Landing Page — Docker Swarm Setup Script
 # Target: Amazon Linux 2023 (t3.small)
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -8,147 +8,123 @@ set -euo pipefail
 REPO_URL="https://github.com/YousefKhaled53/TakhaialLandingPage.git"
 APP_DIR="/opt/takhaial"
 DOMAIN="takhaial.com"
+STACK_NAME="takhaial"
 
 echo "═══════════════════════════════════════════════════"
-echo "  TAKHAIAL · Server Provisioning"
+echo "  TAKHAIAL · Docker Swarm Provisioning"
 echo "═══════════════════════════════════════════════════"
 
 # ── 1. System packages ───────────────────────────────────────
-echo "[1/8] Installing system packages..."
+echo "[1/7] Installing system packages..."
 sudo dnf update -y
-sudo dnf install -y git nginx python3.11 python3.11-pip gcc
+sudo dnf install -y git
 
-# ── 2. Node.js 20 via NodeSource ─────────────────────────────
-echo "[2/8] Installing Node.js 20..."
-if ! command -v node &> /dev/null; then
-    curl -fsSL https://rpm.nodesource.com/setup_20.x | sudo bash -
-    sudo dnf install -y nodejs
+# ── 2. Docker Engine ─────────────────────────────────────────
+echo "[2/7] Installing Docker..."
+if ! command -v docker &> /dev/null; then
+    sudo dnf install -y docker
+    sudo systemctl enable docker
+    sudo systemctl start docker
+    sudo usermod -aG docker ec2-user
+    echo "  Docker installed. You may need to re-login for group changes."
 fi
-echo "Node $(node --version) · npm $(npm --version)"
+echo "  Docker $(docker --version)"
 
-# ── 3. Clone repository ─────────────────────────────────────
-echo "[3/8] Cloning repository..."
+# ── 3. Initialize Docker Swarm ───────────────────────────────
+echo "[3/7] Initializing Docker Swarm..."
+if ! docker info 2>/dev/null | grep -q "Swarm: active"; then
+    # Get the private IP for swarm advertise
+    PRIVATE_IP=$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4 2>/dev/null || hostname -I | awk '{print $1}')
+    sudo docker swarm init --advertise-addr "$PRIVATE_IP" 2>/dev/null || echo "  Swarm already initialized"
+fi
+echo "  ✓ Swarm mode active"
+
+# ── 4. Clone repository ─────────────────────────────────────
+echo "[4/7] Cloning repository..."
 sudo mkdir -p "$APP_DIR"
 sudo chown ec2-user:ec2-user "$APP_DIR"
 
 if [ -d "$APP_DIR/.git" ]; then
-    echo "  Repo already exists, pulling latest..."
+    echo "  Repo exists, pulling latest..."
     cd "$APP_DIR" && git pull
 else
     git clone "$REPO_URL" "$APP_DIR"
 fi
 
-# ── 4. Copy the video asset if present locally ───────────────
-# The .mp4 is gitignored; if you uploaded it to /tmp, copy it in
+# Copy the video asset if uploaded to /tmp
 if [ -f "/tmp/Digital_Eye_Animation_Generated.mp4" ]; then
-    echo "[3b] Copying video asset..."
+    echo "  Copying video asset..."
     cp /tmp/Digital_Eye_Animation_Generated.mp4 "$APP_DIR/frontend/public/"
 fi
 
-# ── 5. Backend setup ────────────────────────────────────────
-echo "[4/8] Setting up backend..."
-cd "$APP_DIR/backend"
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-deactivate
+# ── 5. Build Docker images ──────────────────────────────────
+echo "[5/7] Building Docker images (this takes 3-5 minutes)..."
+cd "$APP_DIR"
 
-# ── 6. Frontend setup & build ────────────────────────────────
-echo "[5/8] Building frontend (this may take 2-3 minutes)..."
-cd "$APP_DIR/frontend"
-npm ci
-NEXT_PUBLIC_API_URL="https://$DOMAIN" npm run build
+echo "  Building frontend image..."
+sudo docker build -t takhaial-frontend:latest \
+    --build-arg NEXT_PUBLIC_API_URL="https://$DOMAIN" \
+    ./frontend
 
-# Copy standalone + static + public for production
-cp -r .next/standalone/ "$APP_DIR/frontend/standalone/"
-cp -r .next/static "$APP_DIR/frontend/standalone/.next/static"
-cp -r public "$APP_DIR/frontend/standalone/public"
+echo "  Building backend image..."
+sudo docker build -t takhaial-backend:latest ./backend
 
-# ── 7. Systemd services ─────────────────────────────────────
-echo "[6/8] Creating systemd services..."
+echo "  ✓ Images built"
+sudo docker images | grep takhaial
 
-# Backend service
-sudo tee /etc/systemd/system/takhaial-backend.service > /dev/null <<'EOF'
-[Unit]
-Description=Takhaial FastAPI Backend
-After=network.target
+# ── 6. Deploy Swarm Stack ───────────────────────────────────
+echo "[6/7] Deploying Swarm stack..."
+cd "$APP_DIR"
 
-[Service]
-Type=simple
-User=ec2-user
-WorkingDirectory=/opt/takhaial/backend
-Environment="CORS_ORIGINS=https://takhaial.com,https://www.takhaial.com"
-ExecStart=/opt/takhaial/backend/.venv/bin/gunicorn main:app \
-    --workers 2 \
-    --worker-class uvicorn.workers.UvicornWorker \
-    --bind 127.0.0.1:8000 \
-    --access-logfile - \
-    --error-logfile -
-Restart=always
-RestartSec=5
+# Remove existing stack if present
+sudo docker stack rm "$STACK_NAME" 2>/dev/null || true
+sleep 5
 
-[Install]
-WantedBy=multi-user.target
-EOF
+# Deploy the stack
+sudo docker stack deploy -c docker-compose.yml "$STACK_NAME"
 
-# Frontend service
-sudo tee /etc/systemd/system/takhaial-frontend.service > /dev/null <<EOF
-[Unit]
-Description=Takhaial Next.js Frontend
-After=network.target
+echo "  ✓ Stack deployed"
+echo "  Waiting 20s for services to start..."
+sleep 20
 
-[Service]
-Type=simple
-User=ec2-user
-WorkingDirectory=/opt/takhaial/frontend/standalone
-Environment="NODE_ENV=production"
-Environment="PORT=3000"
-Environment="HOSTNAME=0.0.0.0"
-ExecStart=/usr/bin/node server.js
-Restart=always
-RestartSec=5
+# Show service status
+echo ""
+echo "  Service status:"
+sudo docker stack services "$STACK_NAME"
 
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable takhaial-backend takhaial-frontend
-sudo systemctl start takhaial-backend takhaial-frontend
-
-# ── 8. Nginx configuration ──────────────────────────────────
-echo "[7/8] Configuring Nginx..."
-sudo cp "$APP_DIR/deploy/nginx.conf" /etc/nginx/conf.d/takhaial.conf
-
-# Remove default server block if it exists
-sudo rm -f /etc/nginx/conf.d/default.conf 2>/dev/null || true
-
-sudo nginx -t
-sudo systemctl enable nginx
-sudo systemctl restart nginx
-
-# ── 9. SSL via Certbot (optional — run after DNS propagation)
-echo "[8/8] Installing Certbot..."
-sudo dnf install -y certbot python3-certbot-nginx 2>/dev/null || {
-    sudo pip3 install certbot certbot-nginx
-}
+# ── 7. SSL via Certbot ──────────────────────────────────────
+echo ""
+echo "[7/7] SSL Setup..."
+echo "  To enable SSL after DNS propagation, run:"
+echo ""
+echo "  # 1. Get certificate:"
+echo "  sudo docker run --rm -v takhaial_certbot-etc:/etc/letsencrypt \\"
+echo "    -v takhaial_certbot-var:/var/lib/letsencrypt \\"
+echo "    -v takhaial_certbot-webroot:/var/www/certbot \\"
+echo "    certbot/certbot certonly --webroot -w /var/www/certbot \\"
+echo "    -d $DOMAIN -d www.$DOMAIN --agree-tos -m admin@$DOMAIN --non-interactive"
+echo ""
+echo "  # 2. Update nginx config to use SSL, then:"
+echo "  sudo docker service update --force ${STACK_NAME}_nginx"
 
 echo ""
 echo "═══════════════════════════════════════════════════"
-echo "  ✓ SETUP COMPLETE"
+echo "  ✓ DEPLOYMENT COMPLETE"
 echo "═══════════════════════════════════════════════════"
 echo ""
-echo "  Backend:   http://localhost:8000/health"
-echo "  Frontend:  http://localhost:3000"
-echo "  Nginx:     http://$DOMAIN (after DNS)"
+echo "  Stack:       $STACK_NAME"
+echo "  Services:    sudo docker stack services $STACK_NAME"
+echo "  Logs:        sudo docker service logs ${STACK_NAME}_frontend -f"
+echo "               sudo docker service logs ${STACK_NAME}_backend -f"
+echo "               sudo docker service logs ${STACK_NAME}_nginx -f"
+echo "               sudo docker service logs ${STACK_NAME}_autoscaler -f"
 echo ""
-echo "  To enable SSL (after DNS points to this server):"
-echo "    sudo certbot --nginx -d $DOMAIN -d www.$DOMAIN"
+echo "  Scaling:     sudo docker service scale ${STACK_NAME}_frontend=3"
+echo "               sudo docker service scale ${STACK_NAME}_backend=3"
 echo ""
-echo "  Service management:"
-echo "    sudo systemctl status takhaial-backend"
-echo "    sudo systemctl status takhaial-frontend"
-echo "    sudo journalctl -u takhaial-backend -f"
-echo "    sudo journalctl -u takhaial-frontend -f"
+echo "  Auto-scaler: Monitors CPU every 30s"
+echo "               Scale up  > 70% CPU → max 5 replicas"
+echo "               Scale down < 20% CPU → min 1 replica"
+echo ""
+echo "  Site:        http://$DOMAIN (SSL pending)"
 echo "═══════════════════════════════════════════════════"
