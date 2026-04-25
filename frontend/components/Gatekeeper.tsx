@@ -104,17 +104,10 @@ export default function Gatekeeper({ onEnter }: GatekeeperProps) {
             transition={{ duration: 1.1, delay: 0.6, ease: [0.2, 0.8, 0.2, 1] }}
             className="absolute inset-x-0 bottom-[9%] z-10 flex flex-col items-center gap-8 px-6 text-center"
           >
-            <div className="flex flex-col items-center gap-3">
-              <span className="eyebrow">Takhaial</span>
-              <h1 className="text-balance text-3xl font-bold tracking-wide text-white sm:text-4xl md:text-5xl">
-                Are you ready for the future
-                <span className="text-red-500">?</span>
-              </h1>
-              <p className="max-w-md text-sm font-light text-white">
-                Step through the iris. What you see next is not a website — it is a
-                new interface between mind and machine.
-              </p>
-            </div>
+            <h1 className="text-balance text-3xl font-bold tracking-wide text-white sm:text-4xl md:text-5xl">
+              Are you ready for the future
+              <span className="text-red-500">?</span>
+            </h1>
 
             <div className="flex items-center gap-4">
               <GateButton variant="primary" onClick={handleYes}>

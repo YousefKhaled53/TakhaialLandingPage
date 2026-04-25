@@ -14,12 +14,16 @@ import asyncio
 import logging
 import os
 import random
+import re
 from datetime import datetime, timezone
+from email.message import EmailMessage
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, status
+import aiosmtplib
+import httpx
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
 logger = logging.getLogger("takhaial")
@@ -50,6 +54,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+TURNSTILE_SECRET = os.getenv("TURNSTILE_SECRET_KEY", "")
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+SMTP_HOST = "smtp.gmail.com"
+SMTP_PORT = 587
+SMTP_USER = os.getenv("SMTP_USER", "")
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
+NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL", "info@takhaial.com")
+
+
+async def send_lead_email(ref: str, name: str, email: str, company: Optional[str], message: str) -> None:
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning("email.skipped — SMTP_USER or SMTP_PASSWORD not set")
+        return
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = f"[Takhaial] New lead · {ref}"
+        msg["From"] = SMTP_USER
+        msg["To"] = NOTIFY_EMAIL
+        msg.set_content(
+            f"Reference : {ref}\n"
+            f"Name      : {name}\n"
+            f"Email     : {email}\n"
+            f"Company   : {company or '—'}\n\n"
+            f"Message\n-------\n{message}\n"
+        )
+        await aiosmtplib.send(
+            msg,
+            hostname=SMTP_HOST,
+            port=SMTP_PORT,
+            username=SMTP_USER,
+            password=SMTP_PASSWORD,
+            start_tls=True,
+        )
+        logger.info("email.sent | ref=%s → %s", ref, NOTIFY_EMAIL)
+    except Exception as exc:
+        logger.error("email.failed | ref=%s | %s", ref, exc)
+
+
+async def verify_turnstile(token: str, ip: str) -> bool:
+    """Returns True if the Turnstile token is valid. Skips check if no secret is configured."""
+    if not TURNSTILE_SECRET:
+        return True
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                TURNSTILE_VERIFY_URL,
+                data={"secret": TURNSTILE_SECRET, "response": token, "remoteip": ip},
+            )
+            return resp.json().get("success", False)
+    except Exception:
+        logger.warning("turnstile.verify_failed — allowing through")
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Schemas
@@ -65,11 +123,42 @@ class ChatResponse(BaseModel):
     timestamp: str
 
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_NEWLINE_RE = re.compile(r"[\r\n]+")
+
+
+def _clean(value: str) -> str:
+    """Strip HTML tags, collapse newlines, and trim whitespace."""
+    value = _HTML_TAG_RE.sub("", value)
+    value = _NEWLINE_RE.sub(" ", value)
+    return value.strip()
+
+
 class ContactRequest(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     email: EmailStr
     company: Optional[str] = Field(default=None, max_length=160)
-    message: str = Field(..., min_length=1, max_length=4000)
+    message: str = Field(..., min_length=10, max_length=4000)
+    # Honeypot — must be empty; bots fill it, humans don't see it
+    website: Optional[str] = Field(default=None, max_length=200)
+    # Cloudflare Turnstile token
+    cf_turnstile_token: Optional[str] = Field(default=None, max_length=2048)
+
+    @field_validator("name", "message")
+    @classmethod
+    def must_not_be_blank(cls, v: str) -> str:
+        cleaned = _clean(v)
+        if not cleaned:
+            raise ValueError("Field cannot be empty or whitespace.")
+        return cleaned
+
+    @field_validator("company", mode="before")
+    @classmethod
+    def clean_optional(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = _clean(v)
+        return cleaned if cleaned else None
 
 
 class ContactResponse(BaseModel):
@@ -136,9 +225,18 @@ async def chat(payload: ChatRequest) -> ChatResponse:
 
 
 @app.post("/contact", response_model=ContactResponse, status_code=status.HTTP_201_CREATED)
-async def contact(payload: ContactRequest) -> ContactResponse:
-    if "@" not in payload.email:
-        raise HTTPException(status_code=400, detail="Invalid email address.")
+async def contact(payload: ContactRequest, request: Request) -> ContactResponse:
+    # Option 1 — Honeypot: reject silently if the hidden field was filled
+    if payload.website:
+        logger.warning("contact.honeypot_triggered | ip=%s", request.client.host if request.client else "unknown")
+        raise HTTPException(status_code=400, detail="Invalid submission.")
+
+    # Option 2 — Turnstile: verify the token
+    token = payload.cf_turnstile_token or ""
+    client_ip = request.headers.get("X-Real-IP") or (request.client.host if request.client else "")
+    if not await verify_turnstile(token, client_ip):
+        logger.warning("contact.turnstile_failed | ip=%s", client_ip)
+        raise HTTPException(status_code=400, detail="Human verification failed. Please try again.")
 
     reference_id = f"TKH-{int(datetime.now(timezone.utc).timestamp())}-{random.randint(1000, 9999)}"
     logger.info(
@@ -148,7 +246,8 @@ async def contact(payload: ContactRequest) -> ContactResponse:
         payload.company,
     )
 
-    # A production build would persist this to a CRM / database here.
+    await send_lead_email(reference_id, payload.name, payload.email, payload.company, payload.message)
+
     return ContactResponse(
         ok=True,
         reference_id=reference_id,

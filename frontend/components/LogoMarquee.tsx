@@ -9,11 +9,10 @@ const brands: Brand[] = [
   { name: "Toyota", color: "#FFB547" },
   { name: "BMW", color: "#8A6BFF" },
   { name: "Jaguar", color: "#4ECDC4" },
-  { name: "TMG", color: "#FF6B6B" },
   { name: "Emaar", color: "#6B4CE6" },
   { name: "Jumeirah", color: "#F6E27F" },
-  { name: "Kuwaiti Government", color: "#5AB0FF" },
-  { name: "UAE Government", color: "#FF8FD6" },
+  { name: "Ministry of Interior - Kuwait", color: "#5AB0FF" },
+  { name: "Ministry of Culture UAE", color: "#FF8FD6" },
   { name: "Kuwait Petroleum Corporation", color: "#A0FF9F" },
 ];
 

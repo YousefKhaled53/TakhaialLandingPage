@@ -18,12 +18,14 @@ export const metadata: Metadata = {
     siteName: "Takhaial",
     locale: "en_US",
     type: "website",
+    images: [{ url: "/preview.jpeg", width: 1200, height: 1200, alt: "Takhaial" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Takhaial — Visionary Intelligence",
     description:
       "Deep-tech company fusing Spatial Computing and AI into a single, living interface.",
+    images: ["/preview.jpeg"],
   },
   robots: {
     index: true,

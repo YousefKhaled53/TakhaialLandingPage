@@ -1,16 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Image from "next/image";
+import { Turnstile } from "@marsidev/react-turnstile";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const TURNSTILE_SITE_KEY = process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY ?? "";
 
 type FormState = {
   name: string;
   email: string;
   company: string;
   message: string;
+  website: string; // honeypot — never shown to users
 };
 
 type Status = "idle" | "loading" | "success" | "error";
@@ -21,39 +24,54 @@ export default function ContactFooter() {
     email: "",
     company: "",
     message: "",
+    website: "",
   });
   const [status, setStatus] = useState<Status>("idle");
   const [reference, setReference] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const turnstileToken = useRef<string>("");
+  const [turnstileReady, setTurnstileReady] = useState(!TURNSTILE_SITE_KEY);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Client-side trim + min-length guard
+    const trimmed = {
+      ...form,
+      name: form.name.trim(),
+      email: form.email.trim(),
+      company: form.company.trim(),
+      message: form.message.trim(),
+    };
+    if (!trimmed.name || !trimmed.email || trimmed.message.length < 10) {
+      setStatus("error");
+      setError("Please fill in all required fields. Message must be at least 10 characters.");
+      return;
+    }
+
     setStatus("loading");
     setError(null);
     try {
       const res = await fetch(`${API}/contact`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...trimmed, cf_turnstile_token: turnstileToken.current }),
       });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `HTTP ${res.status}`);
-      }
+      if (!res.ok) throw new Error();
       const data = (await res.json()) as { reference_id: string };
       setReference(data.reference_id);
       setStatus("success");
-      setForm({ name: "", email: "", company: "", message: "" });
-    } catch (err) {
+      setForm({ name: "", email: "", company: "", message: "", website: "" });
+    } catch {
       setStatus("error");
-      setError(
-        err instanceof Error ? err.message : "Something went wrong. Please try again."
-      );
+      setError("Something went wrong. Please try again later.");
     }
   };
 
-  const update = (key: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setForm((f) => ({ ...f, [key]: e.target.value }));
+  const update =
+    (key: keyof FormState) =>
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      setForm((f) => ({ ...f, [key]: e.target.value }));
 
   return (
     <section className="relative">
@@ -83,13 +101,27 @@ export default function ContactFooter() {
                 day.
               </p>
 
-              <div className="mt-6 flex flex-col gap-2 text-xs tracking-wide text-white/45">
-                <div>hello@takhaial.com</div>
-                <div>+971 · KSA · Visionary Intelligence HQ</div>
-              </div>
             </div>
 
             <form onSubmit={onSubmit} className="flex flex-col gap-4">
+              {/* Honeypot — hidden from real users, bots fill it */}
+              <input
+                type="text"
+                name="website"
+                value={form.website}
+                onChange={update("website")}
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  left: "-9999px",
+                  width: "1px",
+                  height: "1px",
+                  opacity: 0,
+                }}
+              />
+
               <Field
                 label="Full name"
                 value={form.name}
@@ -119,9 +151,20 @@ export default function ContactFooter() {
                 placeholder="Tell us what you want to build…"
               />
 
+              {/* Cloudflare Turnstile — only renders when site key is configured */}
+              {TURNSTILE_SITE_KEY && (
+                <Turnstile
+                  siteKey={TURNSTILE_SITE_KEY}
+                  onSuccess={(token) => { turnstileToken.current = token; setTurnstileReady(true); }}
+                  onError={() => setTurnstileReady(false)}
+                  onExpire={() => setTurnstileReady(false)}
+                  options={{ theme: "dark" }}
+                />
+              )}
+
               <button
                 type="submit"
-                disabled={status === "loading"}
+                disabled={status === "loading" || !turnstileReady}
                 className="group relative mt-2 flex items-center justify-center gap-2 rounded-full bg-gradient-to-r from-violet-accent via-violet-glow to-neon-red px-6 py-3 text-sm font-medium text-white shadow-glow transition hover:shadow-[0_0_60px_rgba(107,76,230,0.45)] disabled:opacity-60"
               >
                 {status === "loading" ? "Transmitting…" : "Send transmission"}
