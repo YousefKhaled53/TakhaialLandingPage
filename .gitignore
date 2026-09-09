@@ -24,6 +24,9 @@ Thumbs.db
 .vscode/
 .idea/
 
+# ── Secrets / keys ───────────────────────────────────────────
+*.pem
+
 # ── Load test temp deps ───────────────────────────────────────
 /tmp/loadtest_deps/
 

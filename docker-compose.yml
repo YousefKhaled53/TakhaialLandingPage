@@ -24,9 +24,8 @@ services:
         parallelism: 1
         delay: 5s
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
-        max_attempts: 5
         window: 60s
       resources:
         limits:
@@ -61,9 +60,8 @@ services:
         parallelism: 1
         delay: 5s
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
-        max_attempts: 5
         window: 60s
       resources:
         limits:
@@ -98,7 +96,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
         delay: 5s
       resources:
         limits:
@@ -172,7 +170,7 @@ services:
         constraints:
           - node.role == manager
       restart_policy:
-        condition: on-failure
+        condition: any
       resources:
         limits:
           cpus: "0.10"
